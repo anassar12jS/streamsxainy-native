@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.data.model.ProgressItem
 import com.example.data.model.TmdbItem
+import com.example.ui.components.FilterPill
 import com.example.ui.components.GridPosterCard
 import com.example.ui.components.ProgressCard
 
@@ -97,12 +99,78 @@ fun ListScreen(
             }
 
             item(span = { GridItemSpan(maxLineSpan) }, key = "watchlist_header") {
-                Text(
-                    text = stringResource(R.string.watchlist),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.watchlist),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        if (state.totalWatchlistCount > 0) {
+                            Text(
+                                text = "${state.watchlist.size}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+
+                    if (state.totalWatchlistCount > 0) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) {
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.filter_all),
+                                    selected = state.filter == WatchlistFilter.ALL,
+                                    onClick = { viewModel.setFilter(WatchlistFilter.ALL) }
+                                )
+                            }
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.filter_movies),
+                                    selected = state.filter == WatchlistFilter.MOVIES,
+                                    onClick = { viewModel.setFilter(WatchlistFilter.MOVIES) }
+                                )
+                            }
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.filter_series),
+                                    selected = state.filter == WatchlistFilter.SERIES,
+                                    onClick = { viewModel.setFilter(WatchlistFilter.SERIES) }
+                                )
+                            }
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.sort_recent),
+                                    selected = state.sort == WatchlistSort.RECENT,
+                                    onClick = { viewModel.setSort(WatchlistSort.RECENT) }
+                                )
+                            }
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.sort_rating),
+                                    selected = state.sort == WatchlistSort.RATING,
+                                    onClick = { viewModel.setSort(WatchlistSort.RATING) }
+                                )
+                            }
+                            item {
+                                FilterPill(
+                                    label = stringResource(R.string.sort_title),
+                                    selected = state.sort == WatchlistSort.TITLE,
+                                    onClick = { viewModel.setSort(WatchlistSort.TITLE) }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (state.watchlist.isEmpty()) {

@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,10 +29,11 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,7 +42,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -49,37 +55,48 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
+import com.example.data.model.CatalogCategory
+import com.example.data.model.MediaType
+import com.example.data.model.ProgressItem
 import com.example.data.model.TmdbImages
 import com.example.data.model.TmdbItem
+import com.example.ui.components.FilterPill
+import com.example.ui.components.HomeShimmerSkeleton
 import com.example.ui.components.MediaRow
+import com.example.ui.components.ProgressCard
 import kotlinx.coroutines.delay
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onOpenDetails: (TmdbItem) -> Unit,
     onPlayNow: (TmdbItem) -> Unit,
+    onResumeProgress: (ProgressItem) -> Unit,
+    onSeeAllCategory: (CatalogCategory) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory)
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val selectedFilter by viewModel.selectedFilter.collectAsStateWithLifecycle()
+    val continueWatching by viewModel.continueWatching.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        HomeHeader()
+        HomeHeader(
+            selectedFilter = selectedFilter,
+            onSelectFilter = viewModel::selectFilter
+        )
 
         when (val current = state) {
             is HomeUiState.Loading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
+                HomeShimmerSkeleton()
             }
 
             is HomeUiState.Error -> {
@@ -119,76 +136,129 @@ fun HomeScreen(
 
             is HomeUiState.Success -> {
                 val feed = current.feed
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp)
+                val heroes = feed.heroItems(selectedFilter)
+                val filteredTrending = when (selectedFilter) {
+                    HomeFilter.ALL -> feed.trending
+                    HomeFilter.MOVIES -> feed.trending.filter { it.resolvedMediaType == MediaType.MOVIE }
+                    HomeFilter.SERIES -> feed.trending.filter { it.resolvedMediaType == MediaType.TV }
+                }
+                val filteredContinue = when (selectedFilter) {
+                    HomeFilter.ALL -> continueWatching
+                    HomeFilter.MOVIES -> continueWatching.filter { it.mediaType == MediaType.MOVIE }
+                    HomeFilter.SERIES -> continueWatching.filter { it.mediaType == MediaType.TV }
+                }
+
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = { viewModel.loadHome(isRefresh = true) },
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    val heroes = feed.heroItems
-                    if (heroes.isNotEmpty()) {
-                        item(key = "hero_carousel") {
-                            HeroCarousel(
-                                items = heroes,
-                                onOpenDetails = onOpenDetails,
-                                onPlayNow = onPlayNow
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp)
+                    ) {
+                        if (heroes.isNotEmpty()) {
+                            item(key = "hero_carousel_${selectedFilter.name}") {
+                                HeroCarousel(
+                                    items = heroes,
+                                    onOpenDetails = onOpenDetails,
+                                    onPlayNow = onPlayNow
+                                )
+                            }
+                        }
+
+                        if (filteredContinue.isNotEmpty()) {
+                            item(key = "continue_watching_row") {
+                                ContinueWatchingHomeRow(
+                                    items = filteredContinue,
+                                    onItemClick = onResumeProgress,
+                                    onRemove = { p -> viewModel.removeProgress(p.id, p.mediaType) }
+                                )
+                            }
+                        }
+
+                        item(key = "row_trending") {
+                            MediaRow(
+                                title = CatalogCategory.TRENDING.title,
+                                items = filteredTrending,
+                                onItemClick = onOpenDetails,
+                                onSeeAll = { onSeeAllCategory(CatalogCategory.TRENDING) }
                             )
                         }
-                    }
 
-                    item(key = "row_trending") {
-                        MediaRow(
-                            title = "Trending This Week",
-                            items = feed.trending,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_now_playing") {
-                        MediaRow(
-                            title = "Now Playing in Cinemas",
-                            items = feed.nowPlaying,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_popular_movies") {
-                        MediaRow(
-                            title = "Popular Movies",
-                            items = feed.popularMovies,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_popular_tv") {
-                        MediaRow(
-                            title = "Popular Series",
-                            items = feed.popularTv,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_top_movies") {
-                        MediaRow(
-                            title = "Top Rated Movies",
-                            items = feed.topRatedMovies,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_top_tv") {
-                        MediaRow(
-                            title = "Top Rated Series",
-                            items = feed.topRatedTv,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_upcoming") {
-                        MediaRow(
-                            title = "Coming Soon",
-                            items = feed.upcoming,
-                            onItemClick = onOpenDetails
-                        )
-                    }
-                    item(key = "row_airing") {
-                        MediaRow(
-                            title = "Airing Today",
-                            items = feed.airingToday,
-                            onItemClick = onOpenDetails
-                        )
+                        if (selectedFilter != HomeFilter.SERIES) {
+                            item(key = "row_now_playing") {
+                                MediaRow(
+                                    title = CatalogCategory.NOW_PLAYING.title,
+                                    items = feed.nowPlaying,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.NOW_PLAYING) }
+                                )
+                            }
+                            item(key = "row_popular_movies") {
+                                MediaRow(
+                                    title = CatalogCategory.POPULAR_MOVIES.title,
+                                    items = feed.popularMovies,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.POPULAR_MOVIES) }
+                                )
+                            }
+                        }
+
+                        if (selectedFilter != HomeFilter.MOVIES) {
+                            item(key = "row_popular_tv") {
+                                MediaRow(
+                                    title = CatalogCategory.POPULAR_TV.title,
+                                    items = feed.popularTv,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.POPULAR_TV) }
+                                )
+                            }
+                        }
+
+                        if (selectedFilter != HomeFilter.SERIES) {
+                            item(key = "row_top_movies") {
+                                MediaRow(
+                                    title = CatalogCategory.TOP_MOVIES.title,
+                                    items = feed.topRatedMovies,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.TOP_MOVIES) }
+                                )
+                            }
+                        }
+
+                        if (selectedFilter != HomeFilter.MOVIES) {
+                            item(key = "row_top_tv") {
+                                MediaRow(
+                                    title = CatalogCategory.TOP_TV.title,
+                                    items = feed.topRatedTv,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.TOP_TV) }
+                                )
+                            }
+                        }
+
+                        if (selectedFilter != HomeFilter.SERIES) {
+                            item(key = "row_upcoming") {
+                                MediaRow(
+                                    title = CatalogCategory.UPCOMING.title,
+                                    items = feed.upcoming,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.UPCOMING) }
+                                )
+                            }
+                        }
+
+                        if (selectedFilter != HomeFilter.MOVIES) {
+                            item(key = "row_airing") {
+                                MediaRow(
+                                    title = CatalogCategory.AIRING_TODAY.title,
+                                    items = feed.airingToday,
+                                    onItemClick = onOpenDetails,
+                                    onSeeAll = { onSeeAllCategory(CatalogCategory.AIRING_TODAY) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -197,37 +267,112 @@ fun HomeScreen(
 }
 
 @Composable
-private fun HomeHeader() {
+private fun HomeHeader(
+    selectedFilter: HomeFilter,
+    onSelectFilter: (HomeFilter) -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Box(
-            modifier = Modifier
-                .size(26.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(MaterialTheme.colorScheme.primary),
-            contentAlignment = Alignment.Center
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = Icons.Filled.Movie,
-                contentDescription = stringResource(R.string.cd_app_logo),
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(16.dp)
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Movie,
+                    contentDescription = stringResource(R.string.cd_app_logo),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Text(
+                text = "STREAMSXAINY",
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    letterSpacing = 1.sp
+                ),
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
-        Text(
-            text = "STREAMSXAINY",
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontWeight = FontWeight.Black,
-                fontSize = 14.sp,
-                letterSpacing = 1.sp
-            ),
-            color = MaterialTheme.colorScheme.onBackground
-        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterPill(
+                label = stringResource(R.string.filter_all),
+                selected = selectedFilter == HomeFilter.ALL,
+                onClick = { onSelectFilter(HomeFilter.ALL) },
+                modifier = Modifier.testTag("home_filter_all")
+            )
+            FilterPill(
+                label = stringResource(R.string.filter_movies),
+                selected = selectedFilter == HomeFilter.MOVIES,
+                onClick = { onSelectFilter(HomeFilter.MOVIES) },
+                modifier = Modifier.testTag("home_filter_movies")
+            )
+            FilterPill(
+                label = stringResource(R.string.filter_series),
+                selected = selectedFilter == HomeFilter.SERIES,
+                onClick = { onSelectFilter(HomeFilter.SERIES) },
+                modifier = Modifier.testTag("home_filter_series")
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContinueWatchingHomeRow(
+    items: List<ProgressItem>,
+    onItemClick: (ProgressItem) -> Unit,
+    onRemove: (ProgressItem) -> Unit
+) {
+    Column(modifier = Modifier.padding(bottom = 22.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.secondary)
+            )
+            Text(
+                text = stringResource(R.string.continue_watching),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(
+                items = items,
+                key = { "cw_${it.mediaType.path}_${it.id}_${it.season ?: 0}_${it.episode ?: 0}" }
+            ) { item ->
+                ProgressCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onRemove = { onRemove(item) }
+                )
+            }
+        }
     }
 }
 
@@ -286,6 +431,8 @@ private fun HeroSlide(
     onOpenDetails: () -> Unit,
     onPlayNow: () -> Unit
 ) {
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val backdropUrl = TmdbImages.backdrop(item.backdropPath, "w1280")
 
     Box(
@@ -295,7 +442,10 @@ private fun HeroSlide(
     ) {
         if (backdropUrl != null) {
             AsyncImage(
-                model = backdropUrl,
+                model = ImageRequest.Builder(context)
+                    .data(backdropUrl)
+                    .crossfade(true)
+                    .build(),
                 contentDescription = item.displayTitle,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -309,7 +459,7 @@ private fun HeroSlide(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
                             0.0f to Color.Black.copy(alpha = 0.15f),
-                            0.45f to Color.Transparent,
+                            0.42f to Color.Transparent,
                             1.0f to MaterialTheme.colorScheme.background
                         )
                     )
@@ -365,7 +515,10 @@ private fun HeroSlide(
                     modifier = Modifier
                         .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.onBackground)
-                        .clickable(onClick = onOpenDetails)
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onOpenDetails()
+                        }
                         .padding(horizontal = 18.dp, vertical = 12.dp)
                         .testTag("hero_details_button"),
                     verticalAlignment = Alignment.CenterVertically,
@@ -388,7 +541,10 @@ private fun HeroSlide(
                     modifier = Modifier
                         .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.primary)
-                        .clickable(onClick = onPlayNow)
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onPlayNow()
+                        }
                         .padding(horizontal = 18.dp, vertical = 12.dp)
                         .testTag("hero_watch_button"),
                     verticalAlignment = Alignment.CenterVertically,

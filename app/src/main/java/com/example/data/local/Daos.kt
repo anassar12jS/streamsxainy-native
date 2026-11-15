@@ -29,8 +29,14 @@ interface ProgressDao {
     @Query("SELECT * FROM progress ORDER BY updatedAt DESC LIMIT 20")
     fun observeRecentProgress(): Flow<List<ProgressEntity>>
 
+    @Query("SELECT * FROM progress WHERE tmdbId = :tmdbId AND mediaType = :mediaType ORDER BY updatedAt DESC LIMIT 1")
+    fun observeLatestForTitle(tmdbId: Int, mediaType: String): Flow<ProgressEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: ProgressEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(entity: ProgressEntity)
 
     @Query("DELETE FROM progress WHERE tmdbId = :tmdbId AND mediaType = :mediaType")
     suspend fun deleteByTitle(tmdbId: Int, mediaType: String)

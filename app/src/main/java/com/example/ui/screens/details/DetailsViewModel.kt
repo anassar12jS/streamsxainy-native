@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.StreamsxainyApp
 import com.example.data.model.Episode
 import com.example.data.model.MediaType
+import com.example.data.model.ProgressItem
 import com.example.data.model.TitleDetail
 import com.example.data.repository.MediaRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +37,13 @@ class DetailsViewModel(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000L),
             initialValue = false
+        )
+
+    val savedProgress: StateFlow<ProgressItem?> = repository.observeLatestProgressForTitle(tmdbId, mediaType)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = null
         )
 
     private val _selectedSeason = MutableStateFlow<Int?>(null)
@@ -81,11 +89,9 @@ class DetailsViewModel(
         }
     }
 
-    fun toggleWatchlist() {
-        val current = (_uiState.value as? DetailsUiState.Success)?.detail ?: return
-        viewModelScope.launch {
-            repository.toggleWatchlist(current.toTmdbItem(mediaType))
-        }
+    suspend fun toggleWatchlistAndReturnState(): Boolean? {
+        val current = (_uiState.value as? DetailsUiState.Success)?.detail ?: return null
+        return repository.toggleWatchlist(current.toTmdbItem(mediaType))
     }
 
     companion object {

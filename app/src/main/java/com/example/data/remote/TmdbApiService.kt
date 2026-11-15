@@ -1,7 +1,10 @@
 package com.example.data.remote
 
 import com.example.BuildConfig
+import com.example.data.model.CatalogCategory
 import com.example.data.model.Episode
+import com.example.data.model.Genre
+import com.example.data.model.GenreListResponse
 import com.example.data.model.MediaType
 import com.example.data.model.SeasonDetailResponse
 import com.example.data.model.TitleDetail
@@ -52,29 +55,63 @@ class TmdbApiService {
             item.copy(mediaType = resolved)
         }
 
-    suspend fun trending(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/trending/all/week").results.withMediaType()
+    suspend fun categoryPage(category: CatalogCategory, page: Int = 1): TmdbPagedResponse {
+        val (path, forcedType) = when (category) {
+            CatalogCategory.TRENDING -> "/trending/all/week" to null
+            CatalogCategory.NOW_PLAYING -> "/movie/now_playing" to MediaType.MOVIE
+            CatalogCategory.POPULAR_MOVIES -> "/movie/popular" to MediaType.MOVIE
+            CatalogCategory.POPULAR_TV -> "/tv/popular" to MediaType.TV
+            CatalogCategory.TOP_MOVIES -> "/movie/top_rated" to MediaType.MOVIE
+            CatalogCategory.TOP_TV -> "/tv/top_rated" to MediaType.TV
+            CatalogCategory.UPCOMING -> "/movie/upcoming" to MediaType.MOVIE
+            CatalogCategory.AIRING_TODAY -> "/tv/airing_today" to MediaType.TV
+        }
+        val response = get<TmdbPagedResponse>(path, mapOf("page" to page.toString()))
+        return response.copy(
+            results = response.results
+                .filter { forcedType != null || it.mediaType == "movie" || it.mediaType == "tv" }
+                .withMediaType(forcedType)
+        )
+    }
 
-    suspend fun popularMovies(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/movie/popular").results.withMediaType(MediaType.MOVIE)
+    suspend fun trending(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.TRENDING, page).results
 
-    suspend fun popularTv(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/tv/popular").results.withMediaType(MediaType.TV)
+    suspend fun popularMovies(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.POPULAR_MOVIES, page).results
 
-    suspend fun topRatedMovies(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/movie/top_rated").results.withMediaType(MediaType.MOVIE)
+    suspend fun popularTv(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.POPULAR_TV, page).results
 
-    suspend fun topRatedTv(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/tv/top_rated").results.withMediaType(MediaType.TV)
+    suspend fun topRatedMovies(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.TOP_MOVIES, page).results
 
-    suspend fun nowPlaying(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/movie/now_playing").results.withMediaType(MediaType.MOVIE)
+    suspend fun topRatedTv(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.TOP_TV, page).results
 
-    suspend fun upcoming(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/movie/upcoming").results.withMediaType(MediaType.MOVIE)
+    suspend fun nowPlaying(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.NOW_PLAYING, page).results
 
-    suspend fun airingToday(): List<TmdbItem> =
-        get<TmdbPagedResponse>("/tv/airing_today").results.withMediaType(MediaType.TV)
+    suspend fun upcoming(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.UPCOMING, page).results
+
+    suspend fun airingToday(page: Int = 1): List<TmdbItem> =
+        categoryPage(CatalogCategory.AIRING_TODAY, page).results
+
+    suspend fun genres(type: MediaType): List<Genre> =
+        get<GenreListResponse>("/genre/${type.path}/list").genres
+
+    suspend fun discoverByGenre(type: MediaType, genreId: Int, page: Int = 1): TmdbPagedResponse {
+        val response = get<TmdbPagedResponse>(
+            "/discover/${type.path}",
+            mapOf(
+                "with_genres" to genreId.toString(),
+                "sort_by" to "popularity.desc",
+                "page" to page.toString()
+            )
+        )
+        return response.copy(results = response.results.withMediaType(type))
+    }
 
     suspend fun search(query: String): List<TmdbItem> =
         get<TmdbPagedResponse>(
@@ -84,8 +121,18 @@ class TmdbApiService {
             .filter { it.mediaType == "movie" || it.mediaType == "tv" }
             .withMediaType()
 
-    suspend fun details(id: Int, type: MediaType): TitleDetail =
-        get("/${type.path}/$id")
+    suspend fun details(id: Int, type: MediaType): TitleDetail {
+        val raw = get<TitleDetail>(
+            "/${type.path}/$id",
+            mapOf("append_to_response" to "credits,videos,recommendations")
+        )
+        val recs = raw.recommendations?.let { paged ->
+            paged.copy(
+                results = paged.results.withMediaType(type)
+            )
+        }
+        return raw.copy(recommendations = recs)
+    }
 
     suspend fun season(id: Int, seasonNumber: Int): List<Episode> =
         get<SeasonDetailResponse>("/tv/$id/season/$seasonNumber").episodes

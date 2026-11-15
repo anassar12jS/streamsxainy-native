@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -16,6 +17,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,23 +27,25 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +78,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.data.model.MediaType
@@ -84,6 +90,9 @@ private const val ANTI_AD_JS = """
   (function () {
     try {
       window.open = function () { return null; };
+      window.alert = function () {};
+      window.confirm = function () { return false; };
+      window.prompt = function () { return null; };
       if (!window.ReactNativeWebView) {
         window.ReactNativeWebView = {
           postMessage: function (msg) {
@@ -220,20 +229,42 @@ fun PlayerScreen(
     val view = LocalView.current
     val activity = remember(context) { context.findActivity() }
 
-    var providerIdx by remember { mutableIntStateOf(0) }
+    val providerIdx by viewModel.providerIdx.collectAsStateWithLifecycle()
+    val seasonEpisodes by viewModel.seasonEpisodes.collectAsStateWithLifecycle()
+
+    var activeEpisode by remember(episode) { mutableIntStateOf(episode.coerceAtLeast(1)) }
+    var activePosition by remember(startPosition) { mutableIntStateOf(startPosition.coerceAtLeast(0)) }
     var loading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf(false) }
     var showServers by remember { mutableStateOf(false) }
+    var showEpisodes by remember { mutableStateOf(false) }
     var reloadNonce by remember { mutableIntStateOf(0) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var customFullscreenView by remember { mutableStateOf<View?>(null) }
+    var customViewCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
 
-    val params = remember(tmdbId, mediaType, season, episode, startPosition) {
+    LaunchedEffect(tmdbId, mediaType, season) {
+        viewModel.loadSeasonEpisodes(tmdbId, mediaType, season.coerceAtLeast(1))
+    }
+
+    LaunchedEffect(tmdbId, mediaType, season, activeEpisode) {
+        viewModel.markPlaybackStarted(
+            tmdbId = tmdbId,
+            mediaType = mediaType,
+            title = title,
+            posterPath = posterPath,
+            season = season.coerceAtLeast(1),
+            episode = activeEpisode
+        )
+    }
+
+    val params = remember(tmdbId, mediaType, season, activeEpisode, activePosition) {
         StreamParams(
             type = mediaType,
             id = tmdbId,
             season = season.coerceAtLeast(1),
-            episode = episode.coerceAtLeast(1),
-            position = startPosition.coerceAtLeast(0)
+            episode = activeEpisode,
+            position = activePosition
         )
     }
 
@@ -251,18 +282,36 @@ fun PlayerScreen(
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         onDispose {
+            customViewCallback?.onCustomViewHidden()
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             controller?.show(WindowInsetsCompat.Type.systemBars())
             webViewRef?.destroy()
         }
     }
 
-    BackHandler(onBack = onBack)
+    BackHandler {
+        if (customFullscreenView != null) {
+            customViewCallback?.onCustomViewHidden()
+            customFullscreenView = null
+            customViewCallback = null
+        } else {
+            onBack()
+        }
+    }
 
     fun switchProvider(delta: Int) {
         loading = true
         loadError = false
-        providerIdx = (providerIdx + delta + providers.size) % providers.size
+        viewModel.selectProvider(providerIdx + delta)
+    }
+
+    fun selectEpisode(epNum: Int) {
+        if (epNum < 1) return
+        loading = true
+        loadError = false
+        activePosition = 0
+        activeEpisode = epNum
+        showEpisodes = false
     }
 
     Box(
@@ -296,15 +345,30 @@ fun PlayerScreen(
                                 mediaType = mediaType,
                                 title = title,
                                 posterPath = posterPath,
-                                season = season,
-                                episode = episode,
+                                season = season.coerceAtLeast(1),
+                                episode = activeEpisode,
                                 positionSeconds = pos,
                                 durationSeconds = dur
                             )
                         },
                         "AndroidBridge"
                     )
-                    webChromeClient = WebChromeClient()
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                            if (customFullscreenView != null) {
+                                callback?.onCustomViewHidden()
+                                return
+                            }
+                            customFullscreenView = view
+                            customViewCallback = callback
+                        }
+
+                        override fun onHideCustomView() {
+                            customFullscreenView = null
+                            customViewCallback?.onCustomViewHidden()
+                            customViewCallback = null
+                        }
+                    }
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
@@ -366,6 +430,26 @@ fun PlayerScreen(
                 }
             }
         )
+
+        customFullscreenView?.let { fsView ->
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                factory = { ctx ->
+                    FrameLayout(ctx).apply {
+                        (fsView.parent as? ViewGroup)?.removeView(fsView)
+                        addView(
+                            fsView,
+                            FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        )
+                    }
+                }
+            )
+        }
 
         if (loading) {
             Box(
@@ -436,7 +520,7 @@ fun PlayerScreen(
             }
         }
 
-        // Minimal floating top bar
+        // Floating top bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -461,31 +545,114 @@ fun PlayerScreen(
                 )
             }
 
+            val headerTitle = buildString {
+                append(title.ifBlank { stringResource(R.string.player_now_playing) })
+                if (mediaType == MediaType.TV) {
+                    append(" · S${season.coerceAtLeast(1)}E$activeEpisode")
+                }
+            }
             Text(
-                text = title.ifBlank { stringResource(R.string.player_now_playing) },
+                text = headerTitle,
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.88f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 16.dp)
+                    .padding(horizontal = 12.dp)
             )
 
-            IconButton(
-                onClick = { showServers = !showServers },
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.scrim)
-                    .testTag("player_servers_button")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Filled.SwapHoriz,
-                    contentDescription = stringResource(R.string.cd_switch_server),
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
+                if (mediaType == MediaType.TV) {
+                    val hasPrev = activeEpisode > 1
+                    val maxEp = seasonEpisodes.maxOfOrNull { it.episodeNumber } ?: Int.MAX_VALUE
+                    val hasNext = activeEpisode < maxEp
+
+                    if (hasPrev) {
+                        IconButton(
+                            onClick = { selectEpisode(activeEpisode - 1) },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.scrim)
+                                .testTag("player_prev_episode_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.SkipPrevious,
+                                contentDescription = stringResource(R.string.player_prev_episode),
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+
+                    if (hasNext) {
+                        IconButton(
+                            onClick = { selectEpisode(activeEpisode + 1) },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.scrim)
+                                .testTag("player_next_episode_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.SkipNext,
+                                contentDescription = stringResource(R.string.player_next_episode),
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+
+                    if (seasonEpisodes.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                showEpisodes = !showEpisodes
+                                if (showEpisodes) showServers = false
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (showEpisodes) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.scrim
+                                )
+                                .testTag("player_episodes_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FormatListNumbered,
+                                contentDescription = stringResource(R.string.player_episodes),
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+                }
+
+                IconButton(
+                    onClick = {
+                        showServers = !showServers
+                        if (showServers) showEpisodes = false
+                    },
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (showServers) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.scrim
+                        )
+                        .testTag("player_servers_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SwapHoriz,
+                        contentDescription = stringResource(R.string.cd_switch_server),
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
             }
         }
 
@@ -495,7 +662,7 @@ fun PlayerScreen(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .background(Color.Black.copy(alpha = 0.72f))
+                    .background(Color.Black.copy(alpha = 0.78f))
                     .padding(vertical = 10.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
@@ -519,7 +686,7 @@ fun PlayerScreen(
                                 if (idx != providerIdx) {
                                     loading = true
                                     loadError = false
-                                    providerIdx = idx
+                                    viewModel.selectProvider(idx)
                                 }
                                 showServers = false
                             }
@@ -531,6 +698,49 @@ fun PlayerScreen(
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                             color = if (selected) MaterialTheme.colorScheme.onPrimary
                             else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showEpisodes && seasonEpisodes.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .background(Color.Black.copy(alpha = 0.84f))
+                    .padding(vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(seasonEpisodes, key = { it.episodeNumber }) { ep ->
+                    val selected = ep.episodeNumber == activeEpisode
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable { selectEpisode(ep.episodeNumber) }
+                            .padding(horizontal = 14.dp, vertical = 9.dp)
+                            .testTag("player_ep_chip_${ep.episodeNumber}")
+                    ) {
+                        Text(
+                            text = "E${ep.episodeNumber} · ${ep.name.ifBlank { "Episode ${ep.episodeNumber}" }}",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

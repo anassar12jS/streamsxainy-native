@@ -50,6 +50,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.R
 import com.example.data.model.MediaType
+import com.example.ui.screens.category.CategoryScreen
 import com.example.ui.screens.details.DetailsScreen
 import com.example.ui.screens.home.HomeScreen
 import com.example.ui.screens.list.ListScreen
@@ -66,6 +67,14 @@ data object SearchRoute
 
 @Serializable
 data object ListRoute
+
+@Serializable
+data class CategoryRoute(
+    val title: String,
+    val categoryKey: String? = null,
+    val genreId: Int = -1,
+    val mediaType: String = "movie"
+)
 
 @Serializable
 data class DetailsRoute(
@@ -260,6 +269,25 @@ fun StreamsxainyNavigation() {
                                     item.posterPath
                                 )
                             },
+                            onResumeProgress = { p ->
+                                openPlayer(
+                                    p.mediaType,
+                                    p.id,
+                                    p.season ?: 1,
+                                    p.episode ?: 1,
+                                    p.position,
+                                    p.title,
+                                    p.posterPath
+                                )
+                            },
+                            onSeeAllCategory = { category ->
+                                navController.navigate(
+                                    CategoryRoute(
+                                        title = category.title,
+                                        categoryKey = category.key
+                                    )
+                                )
+                            },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
                         )
                     }
@@ -267,6 +295,15 @@ fun StreamsxainyNavigation() {
                     composable<SearchRoute> {
                         SearchScreen(
                             onItemClick = { item -> openDetails(item.resolvedMediaType, item.id) },
+                            onGenreClick = { genre, type ->
+                                navController.navigate(
+                                    CategoryRoute(
+                                        title = genre.name,
+                                        genreId = genre.id,
+                                        mediaType = type.path
+                                    )
+                                )
+                            },
                             modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
                         )
                     }
@@ -289,6 +326,18 @@ fun StreamsxainyNavigation() {
                         )
                     }
 
+                    composable<CategoryRoute> { entry ->
+                        val route = entry.toRoute<CategoryRoute>()
+                        CategoryScreen(
+                            title = route.title,
+                            categoryKey = route.categoryKey,
+                            genreId = route.genreId.takeIf { it >= 0 },
+                            mediaType = MediaType.from(route.mediaType),
+                            onBack = { navController.popBackStack() },
+                            onItemClick = { item -> openDetails(item.resolvedMediaType, item.id) }
+                        )
+                    }
+
                     composable<DetailsRoute> { entry ->
                         val route = entry.toRoute<DetailsRoute>()
                         val type = MediaType.from(route.type)
@@ -296,9 +345,10 @@ fun StreamsxainyNavigation() {
                             id = route.id,
                             mediaType = type,
                             onBack = { navController.popBackStack() },
-                            onPlay = { season, episode, title, poster ->
-                                openPlayer(type, route.id, season, episode, 0, title, poster)
-                            }
+                            onPlay = { season, episode, position, title, poster ->
+                                openPlayer(type, route.id, season, episode, position, title, poster)
+                            },
+                            onOpenDetails = { item -> openDetails(item.resolvedMediaType, item.id) }
                         )
                     }
 
