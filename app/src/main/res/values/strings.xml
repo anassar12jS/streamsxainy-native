@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">Streamsxainy</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_my_list">My List</string>
+    <string name="hero_details">Details</string>
+    <string name="hero_watch_now">Watch Now</string>
+    <string name="search_placeholder">Search movies &amp; series…</string>
+    <string name="search_empty_prompt">Type to search movies and series</string>
+    <string name="search_no_results">No results for "%1$s"</string>
+    <string name="my_list_title">My List</string>
+    <string name="continue_watching">Continue Watching</string>
+    <string name="watchlist">Watchlist</string>
+    <string name="watchlist_empty">Nothing saved yet — tap the bookmark on a title\'s page.</string>
+    <string name="details_play">Play</string>
+    <string name="details_play_s1e1">Play S1E1</string>
+    <string name="details_episodes">Episodes</string>
+    <string name="details_load_error">Couldn\'t load this title.</string>
+    <string name="player_now_playing">Now Playing</string>
+    <string name="player_loading">Loading %1$s…</string>
+    <string name="player_failed">%1$s failed to load</string>
+    <string name="player_retry">Retry</string>
+    <string name="player_next_server">Next Server</string>
+    <string name="cd_back">Back</string>
+    <string name="cd_clear_search">Clear search</string>
+    <string name="cd_toggle_watchlist">Toggle watchlist</string>
+    <string name="cd_remove_progress">Remove from continue watching</string>
+    <string name="cd_switch_server">Switch server</string>
+    <string name="cd_play_episode">Play episode</string>
+    <string name="cd_app_logo">Streamsxainy logo</string>
+</resources>
